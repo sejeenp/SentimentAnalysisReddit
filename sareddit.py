@@ -1,67 +1,131 @@
-from pprint import pprint
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+from IPython.display import display
 import praw
 import nltk
-from getkey import getkey, key
 from nltk.sentiment.vader import SentimentIntensityAnalyzer as SIA
+from praw.models import MoreComments
+
 nltk.download('vader_lexicon')
 
 #main functions
-
-def get_thread_info(subreddit, param):
+def get_thread_info(subreddit, param, n=1000):
     data = []
+    keys = ['subreddit', 'flair', 'title', 'shortlink',
+            'id', 'author', 'num_comments', 'upvote_ratio', 'created_utc']
 
-    for submission in reddit.subreddit(subreddit).search(param):
-        data.add(submission.subreddit)
-        data.add(submission.author_flair_text)
-        data.add(submission.title)
-        data.add(submission.shortlink)
-        data.add(submission.id)
-        data.add(submission.author)
-        data.add(submission.num_comments)
-        data.add(submission.upvote_ratio)  # percentage of upvotes from all votes
-        data.add(submission.created_utc)
+    for submission in reddit.subreddit(subreddit).search(param, limit=n):
 
-    df = pd.DataFrame(data, columns=['subreddit', 'flair', 'title', 'shortlink',
-                                     'id', 'author', 'num_comments', 'upvote_ratio',
-                                     'created_utc'])
+        dicts = {}
+        values = []
+
+        values.append(submission.subreddit)
+        values.append(submission.author_flair_text)
+        values.append(submission.title)
+        values.append(submission.shortlink)
+        values.append(submission.id)
+        values.append(submission.author)
+        values.append(submission.num_comments)
+        values.append(submission.upvote_ratio)  # percentage of upvotes from all votes
+        values.append(submission.created_utc)
+
+        for i in range(len(keys)):
+            dicts[i] = values[i]
+
+        data.append(dicts)
+
+    df = pd.DataFrame.from_dict(data)
+    df.rename(columns={0: 'subreddit', 1: 'flair', 2: 'title',
+                       3: 'shortlink', 4: 'id', 5: 'author',
+                       6: 'num_comments', 7: 'upvote_ratio',
+                       8: 'created_utc'}, inplace=True)
 
     return df
-
-def sentiment_analysis(dataframe):
+def sentiment_analysis_threads(dataframe):
     sia = SIA()
     results = []
 
     for line in dataframe['title']:
         pol_score = sia.polarity_scores(line)  # returns dict
-        pol_score['text'] = line  # store line as headline key in dict
+        pol_score['headline'] = line  # store line as headline key in dict
         results.append(pol_score)
 
     df = pd.DataFrame.from_records(results)
 
-    dataframe['label'] = 0
+    df['label'] = 0
+    df.loc[df['compound'] > 0.2, 'label'] = 1  # positive
+    df.loc[df['compound'] < -0.2, 'label'] = -1  # negative
 
-    for n in df['compound']:
-        if n < -0.5:
-            dataframe['label'] = -2
-        elif -0.5 <= n < 0:
-            dataframe['label'] = -1
-        elif 0 < n <= 0.5:
-            dataframe['label'] = 1
-        elif n > 0.5:
-            dataframe['label'] = 2
-        else:
-            dataframe['label'] = 0
+    df2 = df[['headline', 'label']]
+
+    dataframe.insert(9, 'sentiment', df2['label'])
 
     return dataframe
+def sentiment_analysis_comments(dataframe):
+    sia = SIA()
+    results = []
+
+    for line in dataframe['body']:
+        pol_score = sia.polarity_scores(line)  # returns dict
+        pol_score['headline'] = line  # store line as headline key in dict
+        results.append(pol_score)
+
+    df = pd.DataFrame.from_records(results)
+
+    df['label'] = 0
+    df.loc[df['compound'] > 0.2, 'label'] = 1  # positive
+    df.loc[df['compound'] < -0.2, 'label'] = -1  # negative
+
+    df2 = df[['headline', 'label']]
+
+    dataframe.insert(8, 'sentiment', df2['label'])
+
+    return dataframe
+def get_comments(url):
+    data = []
+    keys = ['subreddit', 'submission_title', 'permalink', 'id',
+            'author', 'body', 'score', 'created_utc']
+
+    submission = reddit.submission(url=url)
+    # submission.replace_more_comments(limit=None, threshold=0)
+
+    for comment in submission.comments:
+
+        if isinstance(comment, MoreComments):
+            continue
+
+        dicts = {}
+        values = []
+
+        values.append(submission.subreddit)
+        values.append(submission.title)
+        values.append(submission.shortlink)
+        values.append(comment.id)
+        values.append(comment.author)
+        values.append(comment.body)
+        values.append(comment.score)
+        values.append(comment.created_utc)
+
+        for i in range(len(keys)):
+            dicts[i] = values[i]
+
+        data.append(dicts)
+
+    df = pd.DataFrame.from_dict(data)
+    df.rename(columns={0: 'subreddit', 1: 'submission_title', 2: 'shortlink',
+                       3: 'id', 4: 'author', 5: 'body',
+                       6: 'score', 7: 'created_utc'}, inplace=True)
+
+    return df
 
 #instructions - how to create Reddit app
 
 print('''
 전략개발팀 use ONLY!!! by Kirby
+
+#NOTE: Please read everything carefully + follow the instructions
+    B/C the dev. does not know how to catch exceptions.
+    And you'll have to rerun the program from the beginning if anything goes wrong.
+    Sorry...
 
 **SET UP - Reddit**
 1. Log on to Reddit: https://www.reddit.com/
@@ -79,11 +143,16 @@ input('press the ENTER key to continue: ')
 
 #set up for praw
 
+print('''
+Please input the following:
+(Make sure there are no spaces at the end!!!)
+''')
+
 agent_input = input('enter Reddit username (next to "developers"): ')
-id_input = input('enter client_id (below "personal use script": ')
+id_input = input('enter client_id (below "personal use script"): ')
 secret_input = input('enter client_secret (next to "secret"): ')
 
-user_agent = f"PlsNoBlockMeReddit 1.0 by /u/{agent_input}"
+user_agent = f"PracticeScript 1.1 by /u/{agent_input}"
 reddit = praw.Reddit(
     client_id=id_input,
     client_secret=secret_input,
@@ -91,44 +160,121 @@ reddit = praw.Reddit(
 )
 
 print(f'''
-Your script ID(?) for Reddit:
+Here's the ID of your Reddit script: 
 * user agent: {user_agent}
 * client id: {id_input}
 * client secret: {secret_input}
 ''')
 
+
 input('press the ENTER key to continue: ')
 
 print('''
 **COMMANDS**
-threads - scrapes + analyzes sentiment of headlines in a subreddit. (w/ search words)
-comments - scrapes + analyzes sentiment of comments in a thread.
+/threads - scrapes + analyzes sentiment of headlines in a subreddit. (w/ search words)
+/comments - scrapes + analyzes sentiment of comments in a thread.
 ''')
 
 user_input_command = input('Type a command: ')
 
-'''
-if user_input_command != None:
-    #for Reddit threads
-    if user_input_command == "threads":
+#for Reddit threads
+if user_input_command == "/threads":
 
+    print('''
+    **ABOUT THREADS**
+    This script takes one or more subreddits;
+    Analyzes the sentiment of the titles (-1 / 0 / 1);
+    Returns a .CSV file of the results.
+        
+    documentation: https://praw.readthedocs.io/en/stable/code_overview/models/subreddit.html
+    ''')
 
+    subreddit = input('Input subreddit(s) | ex) Genshin_Impact: ')
+    param = input('Input search words | ex) flair:Discussion, flair:News: ')
+    limit = input('Input # of threads (default = 1000) | ex) 100: ')
 
+    df = get_thread_info(subreddit, param, int(limit))
+    sentiment_analysis_threads(df)
 
+    print('----------INFO-----------')
 
+    print("Distribution (sentiment): ")
+    display(df.sentiment.value_counts())
 
-    #for Reddit comments
-    elif user_input_command == "comments":
+    print('-------------------------')
 
-    #for invalid command inputs
+    print("Percent distribution (sentiment): ")
+    display(df.sentiment.value_counts(normalize=True) * 100)
+
+    print('-------------------------')
+
+    user_response = input('Would you like to export as a .CSV file? (y/n): ')
+
+    if user_response.lower() == 'y':
+        file_name = input('Input file name | ex) genshin_threads.csv: ')
+        print('Exporting threads to .CSV...')
+        df.to_csv(fr'{file_name}', index=False)
+        print("Saved! (idk to where tho sorry)")
+
+    elif user_response.lower() == 'n':
+        print('ok...')
+
     else:
-        input("Invalid command. Type a command: ")
-'''
-def get_thread_titles(subreddit, flair):
-    data = set()
-    for submission in reddit.subreddit(subreddit).search(flair):
-        data.add(submission.title)
-    return data
+        print('Invalid response. Input y/n: ')
 
-if user_input_command == "1":
-    get_thread_titles("Genshin_Impact", "flair:Discussion")
+#for Reddit comments
+elif user_input_command == "/comments":
+    print('''
+        **ABOUT COMMENTS**
+        This script takes a thread URL;
+        Analyzes the sentiment of the comments (-1 / 0 / 1);
+        Returns a .CSV file of the results.
+
+        documentation: https://praw.readthedocs.io/en/latest/code_overview/models/comment.html
+        ''')
+
+    url = input('Input thread URL: ')
+
+    df = get_comments(url)
+    sentiment_analysis_comments(df)
+
+    print('----------INFO-----------')
+
+    print("Distribution (sentiment): ")
+    display(df.sentiment.value_counts())
+
+    print('-------------------------')
+
+    print("Percent distribution (sentiment): ")
+    display(df.sentiment.value_counts(normalize=True) * 100)
+
+    print('-------------------------')
+
+    print("Output sample: ")
+    display(df.head())
+
+    user_response = input('Would you like to export as a .CSV file? (y/n): ')
+
+    if user_response.lower() == 'y':
+        file_name = input('Input file name: ex) genshin_comments_jv5fdem.csv: ')
+        print('Exporting threads to .CSV...')
+        df.to_csv(fr'{file_name}', index=False)
+        print("Saved! (idk to where tho sorry)")
+
+    elif user_response.lower() == 'n':
+        print('ok...')
+
+    else:
+        print('Invalid response. Input y/n: ')
+
+#for invalid command inputs
+else:
+    input('''
+    Invalid command. Type a command: 
+        
+    **COMMANDS**
+    /threads - scrapes + analyzes sentiment of headlines in a subreddit. (w/ search words)
+    /comments - scrapes + analyzes sentiment of comments in a thread.
+    ''')
+
+input('press the ENTER key to end session: ')
